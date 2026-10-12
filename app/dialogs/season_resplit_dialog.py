@@ -71,7 +71,10 @@ class SeasonResplitDialog(QDialog):
         form.addRow("每集时长：", duration_row)
         root.addLayout(form)
 
-        hint = QLabel("将最短和最长设置为相同数值，可使用固定时长。默认在 30–50 秒间逐集随机。")
+        hint = QLabel(
+            "将最短和最长设置为相同数值，可使用固定目标时长。"
+            "为避免最后产生过短剧集，必要时会先后放宽 5% 和 10%。"
+        )
         hint.setWordWrap(True)
         root.addWidget(hint)
         self.summary = QLabel("")

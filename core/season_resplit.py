@@ -74,23 +74,24 @@ def plan_episode_durations(
     *,
     rng: Optional[random.Random] = None,
 ) -> List[float]:
-    """Plan chunks while avoiding a tiny final episode where possible."""
+    """Plan chunks while avoiding a tiny final episode where possible.
+
+    The requested range remains the first choice.  When the total duration
+    cannot be divided inside that range, progressively allow 5% and then 10%
+    variance before falling back to a short final remainder.
+    """
     if total_seconds <= 0:
         raise ValueError("The source videos have no playable duration.")
     if minimum < 1 or maximum < minimum:
         raise ValueError("Invalid episode duration range.")
     picker = rng or random.SystemRandom()
     total = float(total_seconds)
-    if minimum == maximum:
-        full, remainder = divmod(total, minimum)
-        result = [float(minimum)] * int(full)
-        if remainder > 0.05:
-            result.append(remainder)
-        return result or [total]
+    def plan_within(low_limit: float, high_limit: float) -> Optional[List[float]]:
+        least_count = math.ceil(total / high_limit)
+        greatest_count = math.floor(total / low_limit)
+        if least_count > greatest_count:
+            return None
 
-    least_count = math.ceil(total / maximum)
-    greatest_count = math.floor(total / minimum)
-    if least_count <= greatest_count:
         ideal = round(total / ((minimum + maximum) / 2.0))
         count = max(least_count, min(greatest_count, ideal))
         remaining = total
@@ -100,8 +101,8 @@ def plan_episode_durations(
             if not slots_after:
                 result.append(remaining)
                 break
-            low = max(float(minimum), remaining - slots_after * maximum)
-            high = min(float(maximum), remaining - slots_after * minimum)
+            low = max(low_limit, remaining - slots_after * high_limit)
+            high = min(high_limit, remaining - slots_after * low_limit)
             integer_low, integer_high = math.ceil(low), math.floor(high)
             duration = (
                 float(picker.randint(integer_low, integer_high))
@@ -111,8 +112,19 @@ def plan_episode_durations(
             remaining -= duration
         return result
 
+    # Prefer the exact requested range. If it leaves a tiny tail, accept the
+    # user-facing 5–10% tolerance and distribute that tail across episodes.
+    for tolerance in (0.0, 0.05, 0.10):
+        result = plan_within(
+            float(minimum) * (1.0 - tolerance),
+            float(maximum) * (1.0 + tolerance),
+        )
+        if result is not None:
+            return result
+
     # Very short input, or a total that cannot satisfy the range exactly.
-    # Keep ordinary chunks valid and allow only the final remainder to be short.
+    # Keep ordinary chunks valid and allow only the final remainder to be short
+    # when even the 10% tolerance cannot absorb it.
     remaining = total
     result = []
     while remaining > maximum:
@@ -344,6 +356,7 @@ class SeasonResplitter:
             "## 重新分集信息", "",
             f"- 原始文件数：{len(list(sources))}",
             f"- 目标时长范围：{options.min_episode_seconds}–{options.max_episode_seconds} 秒",
+            "- 时长容差：为避免过短尾集，必要时最多放宽 10%。",
             "- 处理方式：按文件名自然排序后连续合并，再按目标时长重新切分。", "",
             "## 剧集列表", "",
         ]

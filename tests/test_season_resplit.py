@@ -32,6 +32,17 @@ def test_fixed_duration_allows_only_short_final_remainder():
     assert plan_episode_durations(70, 30, 30, rng=Random(1)) == [30, 30, 10]
 
 
+def test_five_percent_tolerance_absorbs_a_small_fixed_duration_remainder():
+    durations = plan_episode_durations(62, 30, 30, rng=Random(1))
+    assert durations == [31, 31]
+    assert all(28.5 <= duration <= 31.5 for duration in durations)
+
+
+def test_ten_percent_tolerance_avoids_a_short_tail_at_upper_bound():
+    durations = plan_episode_durations(55, 30, 50, rng=Random(1))
+    assert durations == [55]
+
+
 def test_short_source_becomes_one_short_episode():
     assert plan_episode_durations(12.5, 30, 50, rng=Random(1)) == [12.5]
 
@@ -87,9 +98,9 @@ def test_rebuild_creates_named_episodes_document_and_fallback_poster(tmp_path, m
     )
 
     output_dir = Path(result["output_dir"])
-    assert result["episode_count"] == 3
+    assert result["episode_count"] == 2
     assert [p.name for p in sorted(output_dir.glob("*.mp4"))] == [
-        "测试剧集 - S02E001.mp4", "测试剧集 - S02E002.mp4", "测试剧集 - S02E003.mp4"
+        "测试剧集 - S02E001.mp4", "测试剧集 - S02E002.mp4"
     ]
     assert "剧情介绍" in (output_dir / "剧集介绍.md").read_text(encoding="utf-8")
     assert (output_dir / "poster.jpg").read_bytes() == b"poster"
@@ -123,6 +134,6 @@ def test_rebuild_resumes_from_state_and_skips_completed_episodes(tmp_path, monke
     assert (tmp_path / "Resume Show" / ".encodeforge-resplit-state.json").is_file()
 
     result = splitter.run(options)
-    assert result["episode_count"] == 3
+    assert result["episode_count"] == 2
     assert split_calls.count("Resume Show - S01E001.mp4") == 1
     assert (tmp_path / "Resume Show" / ".encodeforge-resplit-state.json").read_text(encoding="utf-8").find('"complete"') >= 0
