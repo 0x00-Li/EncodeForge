@@ -20,6 +20,7 @@ from core.handlers import (
 from core.ffmpeg_manager import FFmpegManager
 from core.metadata_grabber import MetadataGrabber
 from core.profile_manager import ProfileManager
+from core.season_resplit import SeasonResplitOptions, SeasonResplitter
 from core.subtitle_manager import SubtitleProviders
 
 # Logging is configured by the entry point (main.py / cli.py), not here.
@@ -342,6 +343,18 @@ class EncodeForgeCore:
         if media_type == "movie":
             return self.renamer.search_movie_candidates(title, year)
         return self.renamer.search_tv_show_candidates(title, season, episode)
+
+    def rebuild_season(
+        self,
+        options: SeasonResplitOptions,
+        metadata: Optional[Dict] = None,
+        progress_callback: Optional[Callable] = None,
+    ) -> Dict:
+        """Concatenate and re-split a season without modifying its sources."""
+        return SeasonResplitter(
+            ffmpeg_path=self.ffmpeg_mgr.get_ffmpeg_path(),
+            ffprobe_path=self.ffmpeg_mgr.get_ffprobe_path(),
+        ).run(options, metadata=metadata, progress_callback=progress_callback)
 
 
     # =======================

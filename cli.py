@@ -2,7 +2,7 @@
 """
 EncodeForge CLI
 
-``rename`` and ``gui`` are fully implemented and share EncodeForgeCore with
+``rename``, ``season-resplit`` and ``gui`` are implemented and share EncodeForgeCore with
 the desktop app. ``encode``/``subtitle`` are placeholders and exit with a
 notice; they may land in a later release.
 """
@@ -175,6 +175,74 @@ def rename(input_path, tmdb_key, tvdb_key, omdb_key, trakt_key, provider, patter
     total = result.get("total", len(files))
     click.echo(f"\n{result.get('renamed', 0)}/{total} renamed" + (f", {failures} failed" if failures else ""))
     raise SystemExit(1 if failures else 0)
+
+
+@cli.command("season-resplit")
+@click.argument('input_directory', type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option('--title', required=True, help='Show title used for the output directory and filenames.')
+@click.option('--season', type=click.IntRange(min=0), default=1, show_default=True)
+@click.option('--min-seconds', type=click.IntRange(min=1), default=30, show_default=True,
+              help='Minimum target episode duration.')
+@click.option('--max-seconds', type=click.IntRange(min=1), default=50, show_default=True,
+              help='Maximum target episode duration.')
+@click.option('-y', '--yes', is_flag=True, help='Skip the confirmation prompt.')
+def season_resplit(input_directory, title, season, min_seconds, max_seconds, yes):
+    """Rebuild all videos in INPUT_DIRECTORY as newly timed short episodes."""
+    if max_seconds < min_seconds:
+        raise click.BadParameter('--max-seconds must be greater than or equal to --min-seconds')
+    if not yes and not click.confirm(
+        f'Rebuild "{title}" season {season} into {min_seconds}–{max_seconds}s episodes?',
+        default=False,
+    ):
+        click.echo('Cancelled.')
+        return
+
+    from core.encodeforge_core import EncodeForgeCore
+    from core.season_resplit import SeasonResplitOptions, SeasonResplitter
+    from utils.settings_manager import get_settings_manager
+
+    core = EncodeForgeCore(settings=get_settings_manager().get_merged_conversion_settings())
+    task_options = SeasonResplitOptions(input_directory, title, season, min_seconds, max_seconds)
+    inspection = SeasonResplitter.inspect(task_options)
+    if inspection.get('status') == 'complete':
+        click.echo(f"Task already complete: {inspection.get('directory')}")
+        return
+    if inspection.get('status') == 'existing':
+        raise click.ClickException(
+            f"Output folder exists without recoverable state: {inspection.get('directory')}"
+        )
+    if inspection.get('status') == 'resumable' and not yes:
+        if not click.confirm(
+            f"Unfinished task found in {inspection.get('directory')}; continue generation?",
+            default=True,
+        ):
+            click.echo('Cancelled.')
+            return
+    metadata = {}
+    try:
+        candidates = core.search_rename_candidates(title, 'tv', season, 1)
+        if candidates:
+            metadata = candidates[0]
+    except Exception as exc:
+        logger.warning('Metadata lookup failed; continuing with local poster: %s', exc)
+
+    def show_progress(data):
+        message = data.get('message', '') if isinstance(data, dict) else str(data)
+        if message:
+            click.echo(message)
+
+    try:
+        result = core.rebuild_season(
+            task_options,
+            metadata=metadata,
+            progress_callback=show_progress,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(click.style(
+        f"Created {result['episode_count']} episode(s) in {result['output_dir']}",
+        fg='green', bold=True,
+    ))
 
 
 @cli.command()

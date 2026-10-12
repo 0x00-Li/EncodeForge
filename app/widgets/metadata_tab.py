@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.dialogs.rename_pattern_dialog import RenamePatternDialog
+from app.dialogs.season_resplit_dialog import SeasonResplitDialog
 from app.widgets.custom_widgets import (
     AutoResizeTable,
     StyledCheckBox,
@@ -42,7 +43,7 @@ from core.rename_executor import (
 from core.rename_pattern import apply_filename_options, format_filename_stem, sanitize_filename
 from utils.notifications import get_notification_manager
 from utils.settings_manager import get_settings_manager
-from utils.workers import RenamerWorker
+from utils.workers import RenamerWorker, Worker
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,10 @@ class MetadataTab(QWidget):
         btn_row.addWidget(self.clear_btn)
         btn_row.addStretch()
         self.fetch_metadata_btn = QPushButton("Fetch Metadata")
+        self.resplit_season_btn = QPushButton("整季重新切分…")
+        self.resplit_season_btn.setToolTip(
+            "合并目录内的整季视频，按指定时长重新切分、命名，并生成介绍与海报。"
+        )
         self.match_btn = QPushButton("Search / Fix Match…")
         self.match_btn.setEnabled(False)
         self.match_btn.setToolTip(
@@ -124,6 +129,7 @@ class MetadataTab(QWidget):
         self.undo_btn = QPushButton("Undo Rename")
         self.undo_btn.setEnabled(False)
         btn_row.addWidget(self.fetch_metadata_btn)
+        btn_row.addWidget(self.resplit_season_btn)
         btn_row.addWidget(self.match_btn)
         btn_row.addWidget(self.preview_btn)
         btn_row.addWidget(self.rename_btn)
@@ -208,6 +214,7 @@ class MetadataTab(QWidget):
         self.remove_btn.clicked.connect(self._remove_selected)
         self.clear_btn.clicked.connect(self._clear_all)
         self.fetch_metadata_btn.clicked.connect(self._fetch_metadata)
+        self.resplit_season_btn.clicked.connect(self._open_season_resplit)
         self.match_btn.clicked.connect(self._open_match_picker)
         self.preview_btn.clicked.connect(self._preview_names)
         self.rename_btn.clicked.connect(self._apply_rename)
@@ -215,6 +222,118 @@ class MetadataTab(QWidget):
         self.pattern_btn.clicked.connect(self._open_pattern_dialog)
         self.pattern_input.editingFinished.connect(self._persist_pattern_from_field)
         self.file_table.itemSelectionChanged.connect(self._update_match_btn_enabled)
+
+    def _open_season_resplit(self) -> None:
+        """Configure and run a non-destructive whole-season rebuild."""
+        initial_directory = None
+        selected = self.file_table.selectedIndexes()
+        if selected:
+            item = self.file_table.item(selected[0].row(), 0)
+            if item:
+                value = item.data(Qt.ItemDataRole.UserRole)
+                if value:
+                    initial_directory = Path(value).parent
+
+        dialog = SeasonResplitDialog(self, initial_directory=initial_directory)
+        if not dialog.exec():
+            return
+        options = dialog.options()
+        from core.season_resplit import SeasonResplitter
+
+        inspection = SeasonResplitter.inspect(options)
+        if inspection.get("status") == "resumable":
+            answer = QMessageBox.question(
+                self,
+                "发现未完成的生成任务",
+                f"检测到目录中存在未完成的生成状态：\n{inspection.get('directory')}\n\n"
+                "已完成的剧集会跳过，是否继续生成？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        elif inspection.get("status") == "complete":
+            QMessageBox.information(
+                self,
+                "生成已完成",
+                f"该目录已有完成记录：\n{inspection.get('directory')}\n\n"
+                "如需重新生成，请更换剧集名称或移除该任务的状态文件。",
+            )
+            return
+        elif inspection.get("status") == "existing":
+            QMessageBox.critical(
+                self,
+                "无法继续生成",
+                f"同名输出目录已存在，但没有可恢复的状态文件：\n{inspection.get('directory')}\n\n"
+                "为避免覆盖已有文件，请更换剧集名称或手动处理该目录。",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认整季重新切分",
+            f"将按文件名顺序合并“{options.source_dir}”中的视频，并重新编码切分。\n\n"
+            f"剧集：{options.show_title}（第 {options.season} 季）\n"
+            f"每集：{options.min_episode_seconds}–{options.max_episode_seconds} 秒\n\n"
+            "源文件不会被修改。继续吗？",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        def _job(progress_callback=None):
+            from core.encodeforge_core import EncodeForgeCore
+
+            settings = get_settings_manager().get_merged_conversion_settings()
+            core = EncodeForgeCore(settings=settings)
+            metadata = {}
+            try:
+                candidates = core.search_rename_candidates(
+                    options.show_title,
+                    media_type="tv",
+                    season=options.season,
+                    episode=1,
+                )
+                if candidates:
+                    metadata = candidates[0]
+            except Exception as exc:
+                # Online metadata is optional: documentation and a frame poster
+                # are still generated when every provider is unavailable.
+                logger.warning("Season metadata lookup failed: %s", exc)
+            return core.rebuild_season(
+                options, metadata=metadata, progress_callback=progress_callback
+            )
+
+        self.resplit_season_btn.setEnabled(False)
+        self.resplit_season_btn.setText("正在重新切分…")
+        worker = Worker(_job)
+        self._season_resplit_worker = worker
+        worker.signals.progress.connect(self._on_season_resplit_progress)
+        worker.signals.result.connect(self._on_season_resplit_done)
+        worker.signals.error.connect(self._on_season_resplit_error)
+        worker.signals.finished.connect(self._on_season_resplit_finished)
+        self.thread_pool.start(worker)
+
+    def _on_season_resplit_progress(self, current: int, total: int, message: str) -> None:
+        self.resplit_season_btn.setText(f"重新切分 {current}%")
+        logger.info("Season rebuild: %s", message)
+
+    def _on_season_resplit_done(self, result: Dict[str, Any]) -> None:
+        QMessageBox.information(
+            self,
+            "整季重新切分完成",
+            f"已生成 {result.get('episode_count', 0)} 集。\n\n"
+            f"输出目录：\n{result.get('output_dir', '')}\n\n"
+            "目录中同时生成了《剧集介绍.md》和 poster.jpg。",
+        )
+
+    def _on_season_resplit_error(self, error: tuple) -> None:
+        message = str(error[1]) if len(error) > 1 else "未知错误"
+        logger.error("Season rebuild failed: %s", message)
+        QMessageBox.critical(self, "整季重新切分失败", message)
+
+    def _on_season_resplit_finished(self) -> None:
+        self.resplit_season_btn.setEnabled(True)
+        self.resplit_season_btn.setText("整季重新切分…")
+        self._season_resplit_worker = None
 
     def _update_match_btn_enabled(self) -> None:
         self.match_btn.setEnabled(bool(self.file_table.selectedIndexes()))
