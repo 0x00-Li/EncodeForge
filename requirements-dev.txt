@@ -32,3 +32,5 @@ setuptools>=68.0.0
 Nuitka>=2.4.9,<3
 ordered-set>=4.1.0
 zstandard>=0.22.0
+# Required by Nuitka to convert PNG icons to native platform formats.
+imageio>=2.28.0

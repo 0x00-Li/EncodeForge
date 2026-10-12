@@ -91,7 +91,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install "nuitka>=2.4.9,<3" ordered-set zstandard
+          pip install "nuitka>=2.4.9,<3" ordered-set zstandard imageio
 
       - name: Build with Nuitka (one-file)
         timeout-minutes: 90
@@ -161,7 +161,7 @@ jobs:
                 dbus-libs glib2 zlib
               python3 -m pip install --upgrade pip
               pip install -r requirements.txt
-              pip install "nuitka>=2.4.9,<3" ordered-set zstandard
+              pip install "nuitka>=2.4.9,<3" ordered-set zstandard imageio
               PYTHONUNBUFFERED=1 python3 build_nuitka.py
               chmod +x packaging/linux/build-appimage.sh packaging/linux/AppRun
               ./packaging/linux/build-appimage.sh

@@ -17,6 +17,8 @@
 
 [Features](#features) • [Installation](#installation) • [Quick Start](#quick-start) • [Configuration](#configuration) • [Contributing](#contributing)
 
+中文资料：**[架构与能力说明](docs/ARCHITECTURE_ZH.md)** · **[简体中文使用指南](docs/USER_GUIDE_ZH.md)**。程序默认使用简体中文界面；设置 `ENCODEFORGE_LANG=en` 可切换回英文。
+
 </div>
 
 ---

@@ -78,6 +78,15 @@ def main():
     app.setApplicationName("EncodeForge")
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("EncodeForge")
+
+    # The UI ships with a lightweight Simplified Chinese translation layer.
+    # Set ENCODEFORGE_LANG=en to retain the original English labels.
+    try:
+        from utils.i18n import install_translator
+        if install_translator(app):
+            logger.info("Simplified Chinese UI translation enabled")
+    except Exception as e:
+        logger.warning("UI translation could not be enabled: %s", e)
     
     # Load glassmorphism theme
     try:
